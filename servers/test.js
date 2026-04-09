@@ -1,96 +1,58 @@
-import { openUplinks } from "@ndn/cli-common";
-import { produce } from "@ndn/endpoint";
-import { Data, Name, digestSigning } from "@ndn/packet";
-import { toUtf8 } from "@ndn/util";
+  segmentDownloaded(deltaTimeMs, numBytes, allowSwitch, request, context) {
+    // The time indicates that it could be a cache response, so we should
+    // ignore this value.
+    if (deltaTimeMs >= this.config_.cacheLoadThreshold) {
+      shaka.log.v2('Segment downloaded:',
+          'contentType=' + (request && request.contentType),
+          'deltaTimeMs=' + deltaTimeMs,
+          'numBytes=' + numBytes,
+          'lastTimeChosenMs=' + this.lastTimeChosenMs_,
+          'enabled=' + this.enabled_);
+      goog.asserts.assert(deltaTimeMs >= 0, 'expected a non-negative duration');
+      this.bandwidthEstimator_.sample(deltaTimeMs, numBytes);
+    }
 
-// Konfigurasi Prefix Utama
-const ROOT_PREFIX_STR = "/ndn/myapi";
-
-/**
- * Controller Khusus Sensor
- * Hanya peduli pada bagian setelah /ndn/myapi/sensor
- */
-async function sensorController(interest, subPath) {
-  const action = subPath.at(0)?.text; // misal: "suhu" atau "kelembaban"
-  console.log(`   [SensorController] Menangani aksi: ${action}`);
-
-  let val = "Data tidak ada";
-  if (action === "suhu") val = "25°C";
-  if (action === "kelembaban") val = "60%";
-
-  const response = new Data(
-    interest.name,
-    Data.FreshnessPeriod(1000),
-    toUtf8(val),
-  );
-  await digestSigning.sign(response);
-  return response;
-}
-
-/**
- * Controller Khusus User
- * Hanya peduli pada bagian setelah /ndn/myapi/user
- */
-async function userController(interest, subPath) {
-  const userId = subPath.at(0)?.text;
-  console.log(`   [UserController] Mencari data user ID: ${userId}`);
-
-  const userData = { id: userId, nama: "Budi Santoso", role: "Admin" };
-
-  const response = new Data(
-    interest.name,
-    Data.FreshnessPeriod(1000),
-    toUtf8(JSON.stringify(userData)),
-  );
-  await digestSigning.sign(response);
-  return response;
-}
-
-async function startServer() {
-  try {
-    await openUplinks();
-    console.log(`✅ Server aktif di ${ROOT_PREFIX_STR}`);
-
-    const rootName = new Name(ROOT_PREFIX_STR);
-
-    // --- GATEWAY UTAMA ---
-    produce(
-      rootName,
-      async (interest) => {
-        console.log(`\n[NDN] Interest Masuk: ${interest.name.toString()}`);
-
-        // 1. POTONG JALUR menggunakan slice()
-        // Jika interest: /ndn/myapi/sensor/suhu
-        // rootName.length adalah 2
-        // subPath menjadi: /sensor/suhu
-        const subPath = interest.name.slice(rootName.length);
-
-        // 2. Tentukan "Ruangan" (Controller) mana yang dituju
-        const target = subPath.at(0)?.text;
-
-        if (target === "sensor") {
-          // Lempar ke sensorController, potong lagi bagian "sensor"-nya
-          return await sensorController(interest, subPath.slice(1));
-        }
-
-        if (target === "user") {
-          // Lempar ke userController, potong lagi bagian "user"-nya
-          return await userController(interest, subPath.slice(1));
-        }
-
-        // Default jika rute tidak ditemukan
-        const errorData = new Data(
-          interest.name,
-          toUtf8("Error: Jalur tidak ditemukan"),
-        );
-        await digestSigning.sign(errorData);
-        return errorData;
-      },
-      { concurrency: 16 },
-    );
-  } catch (err) {
-    console.error("Gagal memulai server:", err);
+    if (allowSwitch && (this.lastTimeChosenMs_ != null) && this.enabled_) {
+      this.suggestStreams_();
+    }
   }
-}
+  suggestStreams_(force = false) {
+    shaka.log.v2('Suggesting Streams...');
+    goog.asserts.assert(this.lastTimeChosenMs_ != null,
+        'lastTimeChosenMs_ should not be null');
 
-startServer();
+    if (!force) {
+      if (!this.startupComplete_) {
+        // Check if we've got enough data yet.
+        if (!this.bandwidthEstimator_.hasGoodEstimate()) {
+          shaka.log.v2('Still waiting for a good estimate...');
+          return;
+        }
+        this.startupComplete_ = true;
+
+        this.lastTimeChosenMs_ -=
+            (this.config_.switchInterval - this.config_.minTimeToSwitch) * 1000;
+      }
+
+      // Check if we've left the switch interval.
+      const now = Date.now();
+      const delta = now - this.lastTimeChosenMs_;
+      if (delta < this.config_.switchInterval * 1000) {
+        shaka.log.v2('Still within switch interval...');
+        return;
+      }
+    }
+
+    const chosenVariant = this.chooseVariant();
+    const bandwidthEstimate = this.getBandwidthEstimate();
+    const currentBandwidthKbps = Math.round(bandwidthEstimate / 1000.0);
+
+    if (chosenVariant && this.switch_) {
+      shaka.log.debug(
+          'Calling switch_(), bandwidth=' + currentBandwidthKbps + ' kbps');
+      // If any of these chosen streams are already chosen, Player will filter
+      // them out before passing the choices on to StreamingEngine.
+      this.switch_(chosenVariant, this.config_.clearBufferSwitch,
+          this.config_.safeMarginSwitch);
+    }
+  }

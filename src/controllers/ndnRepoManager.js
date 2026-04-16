@@ -44,7 +44,7 @@ export const publishMemo = async (memoName, bitrateIndex) => {
 
     // Mengatur masa berlaku memo (FreshnessPeriod) selama 10 detik.
     // Ini memastikan keputusan AI yang lama akan kadaluarsa jika kondisi jaringan berubah.
-    decisionData.freshnessPeriod = 10000;
+    decisionData.freshnessPeriod = 2000;
 
     // Memasukkan paket ke dalam Repository
     await store.insert(decisionData);

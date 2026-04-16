@@ -56,7 +56,7 @@ async function handleInferenceRequest(ws, observations, memoName) {
   isInferenceRunning = true;
   try {
     const response = await axios.post(
-      "http://localhost:8000/predict",
+      "http://192.168.1.22:8000/predict",
       {
         observations,
       },

@@ -2,21 +2,22 @@ import axios from "axios";
 import { publishMemo } from "./ndnRepoManager.js";
 function getQuantizedNameOnServer(rawState) {
   // 1. KATEGORI BUFFER (Detik)
-  let b =
+  const bufferCat =
     rawState.buffer < 5 ? "panic" : rawState.buffer < 10 ? "safe" : "full";
 
-  // 2. KATEGORI SPEED (Mbps)
-  let w =
-    rawState.throughput < 2 ? "slow" : rawState.throughput < 6 ? "mid" : "fast";
+  // Kategori throughput (Mbps) — threshold disesuaikan dengan SCALE_TARGET 5.10
+  const speedCat =
+    rawState.throughput < 1.5
+      ? "slow"
+      : rawState.throughput < 3.5
+        ? "mid"
+        : "fast";
 
-  // 3. KATEGORI CWND (Paket)
-  let c =
-    rawState.cwnd < 15 ? "congested" : rawState.cwnd < 45 ? "stable" : "wide";
+  // Kategori CWND (paket) — diturunkan karena TP operasional lebih rendah
+  const cwndCat =
+    rawState.cwnd < 10 ? "congested" : rawState.cwnd < 30 ? "stable" : "wide";
 
-  // 4. KATEGORI SEGMEN (Group per 10)
-  const s = Math.floor(rawState.segment / 10);
-
-  return `/ndn/memo/s${s}/${b}/${w}/${c}`;
+  return `/ndn/memo/s${rawState.segment}/${bufferCat}/${speedCat}/${cwndCat}`;
 }
 const handleMessage = async (ws, message) => {
   try {

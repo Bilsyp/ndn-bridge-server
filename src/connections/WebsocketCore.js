@@ -2,7 +2,7 @@ import { WebSocketServer } from "ws";
 import {
   handleClose,
   handleMessage,
-} from "../controllers/WebSocketController.js";
+} from "../controllers/WebSocketControllerV2.js";
 export async function ConnectionWebSocket() {
   const WS_PORT = process.env.PORT;
   const wss = new WebSocketServer({ port: WS_PORT });

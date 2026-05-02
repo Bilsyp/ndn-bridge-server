@@ -1,58 +1,84 @@
 import {
   makeInMemoryDataStore,
   RepoProducer,
-  PrefixRegShorter,
+  PrefixRegStatic
 } from "@ndn/repo";
-import { Data } from "@ndn/packet";
+import { Data,Name } from "@ndn/packet";
 import { fromUtf8, toUtf8 } from "@ndn/util";
 // Variabel internal untuk menyimpan instance store
-let store = null;
-
-/**
- * Inisialisasi Repository NDN
- * Fungsi ini dijalankan sekali saat Bridge pertama kali menyala.
- */
+export let store = null;
+const DEBUG = true;
 export const initNDNRepo = async () => {
-  if (store) return; // Mencegah inisialisasi ganda
-
+  if (store) return;
   store = await makeInMemoryDataStore();
+  RepoProducer.create(store, { reg: PrefixRegStatic(new Name("/ndn/memo")) });
 
-  // Menjalankan Producer untuk mengekspos data ke jaringan
-  // PrefixRegShorter(1) akan mendaftarkan prefix yang lebih pendek 1 tingkat dari nama data
-  RepoProducer.create(store, { reg: PrefixRegShorter(1) });
+  // PEMBERSIH OTOMATIS (Scavenger)
+  // Menjalankan clearExpired setiap 30 detik untuk menghapus data usang secara massal
+  // setInterval(async () => {
+  //   if (store) {
+  //     await store.clearExpired();
+  //     console.log("🧹 [NDN Repo] Garbage Collector: Expired records cleared.");
+  //   }
+  // }, 30000); 
 
-  console.log("📂 [NDN Repo] Data Store dan Producer berhasil diaktifkan.");
+  console.log("📂 [NDN Repo] Data Store Ready.");
+};
+export const publishMemo = async (memoName, bitrateIndex) => {
+  if (!store) return;
+  try {
+    const name = new Name(memoName);
+    const decisionData = new Data(name);
+    decisionData.content = toUtf8(bitrateIndex.toString());
+    decisionData.freshnessPeriod = 5000; // Tetap 2 detik[cite: 1]
+
+    await store.insert(decisionData);
+    if (DEBUG) await debugStore();
+    console.log(`📝 [NDN Repo] Memo Published: ${memoName}`);
+  } catch (error) {
+    console.error("❌ [NDN Repo] Error inserting data:", error);
+  }
+};
+/**
+ * Cek apakah memo ada dan masih valid
+ */
+export const getMemo = async (memoName) => {
+  if (!store) return null;
+  try {
+    // store.get() di NDNts otomatis mengembalikan undefined jika data expired
+    const data = await store.get(new Name(memoName));
+    return data ? fromUtf8(data.content) : null;
+  } catch (err) {
+    return null;
+  }
 };
 
-/**
- * Menerbitkan (Publish) Keputusan AI ke Jaringan NDN
- * @param {string} memoName Nama unik berdasarkan kondisi jaringan (Quantized Name)
- * @param {number|string} bitrateIndex Hasil keputusan dari AI
- */
-export const publishMemo = async (memoName, bitrateIndex) => {
+
+export const debugStore = async () => {
   if (!store) {
-    console.error("❌ [NDN Repo] Store belum diinisialisasi!");
+    console.log("⚠️ Store belum diinisialisasi.");
     return;
   }
 
+  console.log("--- Isi NDN Repo Saat Ini ---");
+  let count = 0;
+
   try {
-    const decisionData = new Data(memoName);
+    // Memanggil listData() menghasilkan generator
+    const allData = store.listData();
 
-    // Membungkus index bitrate menjadi buffer untuk payload paket NDN
-    // decisionData.content = new TextEncoder().encode(bitrateIndex.toString());
-    decisionData.content = toUtf8(bitrateIndex.toString());
+    for await (const data of allData) {
+      count++;
+      console.log(`${count}. Name: ${data.name.toString()}`);
+      console.log(`Content: ${fromUtf8(data.content)}`); // Decode content ke string
+      console.log(`Freshness: ${data.freshnessPeriod}ms`);
+    }
 
-    // Mengatur masa berlaku memo (FreshnessPeriod) selama 10 detik.
-    // Ini memastikan keputusan AI yang lama akan kadaluarsa jika kondisi jaringan berubah.
-    decisionData.freshnessPeriod = 2000;
-
-    // Memasukkan paket ke dalam Repository
-    await store.insert(decisionData);
-
-    console.log(
-      `📝 [NDN Repo] Memo Berhasil Disimpan: ${memoName} -> [Bitrate: ${bitrateIndex}]`,
-    );
+    if (count === 0) console.log("📭 Repo kosong.");
   } catch (error) {
-    console.error("❌ [NDN Repo] Gagal memasukkan data ke store:", error);
+    console.error("❌ Gagal membaca listData:", error);
+  }
+  finally {
+    console.log("-----------------------------");
   }
 };

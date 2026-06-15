@@ -34,7 +34,7 @@ function runNext() {
  * @param {() => Promise<void>} task - Fungsi async yang akan dijalankan
  * @param {() => void} onQueueFull - Callback jika queue penuh (untuk fallback ke client)
  */
-export function enqueue(task, onQueueFull) {
+export function aiQueue(task, onQueueFull) {
   if (taskQueue.length >= MAX_QUEUE) {
     taskQueue.shift(); // buang request paling lama
     onQueueFull?.();
